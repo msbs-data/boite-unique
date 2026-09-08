@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/cabinet.db
+data/pieces/
+data/exports/
+data/.releves/
+data/entrant/

@@ -1,0 +1,13 @@
+# Démonstration : un seul service, aucune dépendance réseau.
+#
+# En production, ce compose gagne paperless-ngx, postgres, redis et ollama —
+# l'application reste la même, seul le dépôt change d'implémentation.
+services:
+  cabinet:
+    build: .
+    # Écoute uniquement sur la machine : rien n'est exposé au réseau.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/srv/data
+    restart: unless-stopped
