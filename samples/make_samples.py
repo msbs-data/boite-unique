@@ -194,23 +194,44 @@ def main() -> int:
             f"Facture {num}", f"Bonjour,\n\nVeuillez trouver la facture {num}.\n\nCordialement",
             [(f"{num}.pdf", pdf, "application/pdf")], jours, ou))
 
-    # Un ticket photographié : ni XML, ni certitude. Doit partir en « à vérifier ».
-    ticket = b"\xff\xd8\xff\xe0" + b"JFIF ticket de caisse photographie" + b"\x00" * 512
+    photos_dir = RACINE / "photos"
+    def _lire_photo(nom: str, fallback: bytes) -> bytes:
+        p = photos_dir / nom
+        return p.read_bytes() if p.exists() else fallback
+
+    # Un ticket carburant photographié (vrai JPEG haute définition)
+    ticket_carb = _lire_photo("ticket_totalenergies.jpg", b"\xff\xd8\xff\xe0" + b"JFIF ticket de caisse photographie" + b"\x00" * 512)
     ecrire("20_ferrand_ticket.eml", mail(
         "ferrand", "marie.ferrand@boulangerie-ferrand.fr", "Ticket essence",
         "Le ticket de ce matin, pris en photo.",
-        [("IMG_4471.jpg", ticket, "image/jpeg")], 2))
+        [("ticket_totalenergies_gazole.jpg", ticket_carb, "image/jpeg")], 2))
 
-    # Deux pièces jointes dans un seul mail.
+    # Deux pièces jointes dans un seul mail pour Vellard : facture matériel + note de restaurant réelle
     pdf_a, _ = facture("FA-2026-4472", "Point P Materiaux", "552100554",
                        "FR40552100554", "SARL Vellard Toitures", "441.20", "0.20",
                        aujourdhui - timedelta(days=1))
-    note = b"\xff\xd8\xff\xe0" + b"JFIF note de frais restaurant" + b"\x00" * 320
+    note_resto = _lire_photo("ticket_brasserie_commerce.jpg", b"\xff\xd8\xff\xe0" + b"JFIF note de frais restaurant" + b"\x00" * 320)
     ecrire("21_vellard_double.eml", mail(
         "vellard", "facturation@pointp.fr", "Facture et note de frais",
         "Deux pieces dans ce message.",
         [("FA-2026-4472.pdf", pdf_a, "application/pdf"),
-         ("note_restaurant.jpg", note, "image/jpeg")], 1))
+         ("ticket_brasserie_commerce_lyon.jpg", note_resto, "image/jpeg")], 1))
+
+    # Photo de bon de livraison Point.P pour Vellard
+    bl_pointp = _lire_photo("facture_point_p.jpg", b"")
+    if bl_pointp:
+        ecrire("24_vellard_bon_livraison.eml", mail(
+            "vellard", "chantier.melun@vellard-toitures.fr", "Bon de livraison ardoises Point P",
+            "Photo du bon de livraison Point.P signe sur le chantier.",
+            [("bon_livraison_point_p_toitures.jpg", bl_pointp, "image/jpeg")], 1))
+
+    # Note de frais bistrot pour Vellard
+    bistrot_img = _lire_photo("ticket_bistrot_saint_martin.jpg", b"")
+    if bistrot_img:
+        ecrire("25_vellard_bistrot.eml", mail(
+            "vellard", "j.vellard@vellard-toitures.fr", "Note de frais Bistrot Saint-Martin",
+            "Photo ticket dejeuner artisan.",
+            [("ticket_bistrot_saint_martin.jpg", bistrot_img, "image/jpeg")], 1))
 
     # Le même mail renvoyé : doit être reconnu comme doublon, pas recréé.
     ecrire("22_ferrand_doublon.eml", mail(

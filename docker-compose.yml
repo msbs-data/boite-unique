@@ -1,13 +1,85 @@
-# Démonstration : un seul service, aucune dépendance réseau.
-#
-# En production, ce compose gagne paperless-ngx, postgres, redis et ollama —
-# l'application reste la même, seul le dépôt change d'implémentation.
 services:
-  cabinet:
-    build: .
-    # Écoute uniquement sur la machine : rien n'est exposé au réseau.
-    ports:
-      - "127.0.0.1:8000:8000"
-    volumes:
-      - ./data:/srv/data
+  # Base de données PostgreSQL
+  db:
+    image: postgres:16-alpine
+    container_name: boite-unique-db
     restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cabinet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cabinet_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-cabinet_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cabinet} -d ${POSTGRES_DB:-cabinet_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - boite-unique-net
+
+  # Backend FastAPI (Python)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: boite-unique-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-cabinet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cabinet_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-cabinet_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cabinet}:${POSTGRES_PASSWORD:-cabinet_secret}@db:5432/${POSTGRES_DB:-cabinet_db}
+      DATA_DIR: /srv/data
+      DOMAINE: cabinet-demo.fr
+      UTILISATEUR: "M. Loiseau"
+      PYTHONPATH: /srv:/srv/samples
+    volumes:
+      - ./backend:/srv
+      - ./data:/srv/data
+      - ./samples:/srv/samples
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - boite-unique-net
+
+  # Frontend Next.js + shadcn admin dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: boite-unique-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-8001}/api/v1
+      BACKEND_INTERNAL_URL: http://backend:8000
+      PORT: 3000
+      CI: "true"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    depends_on:
+      - backend
+    networks:
+      - boite-unique-net
+
+volumes:
+  postgres_data:
+  frontend_node_modules:
+  frontend_next:
+
+networks:
+  boite-unique-net:
+    driver: bridge
