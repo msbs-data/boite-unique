@@ -69,7 +69,7 @@ for rule in account.rules.order_by("order"):
 
 **Une seule règle**, sans `filter_to`, `assign_correspondent_from = FROM_NOTHING`,
 qui récupère tout le dossier. Le routage se fait dans notre service
-(`app/routing.py`), qui lit `X-Original-To`, `Delivered-To`, `Envelope-To`, la clause
+(`backend/app/services/routing.py`), qui lit `X-Original-To`, `Delivered-To`, `Envelope-To`, la clause
 `for <…>` du `Received`, puis `To` et `Cc`, dans cet ordre, en écartant l'adresse
 attrape-tout.
 
@@ -86,7 +86,7 @@ les vingt jours qu'il nous économise. Le routage n'en fait pas partie.
 ## Effet sur le chiffrage
 
 Les 2 à 3 jours espérés sur le routage ne sont **pas** économisés. En revanche
-`app/routing.py` est déjà écrit et couvert par 8 tests : sur les 4 jours prévus pour
+`backend/app/services/routing.py` est déjà écrit et couvert par des tests : sur les 4 jours prévus pour
 « réception et routage », environ 2 sont faits.
 
 Voir aussi : `decision-02-dolibarr.md`.
