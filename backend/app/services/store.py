@@ -275,7 +275,13 @@ class DepotPostgres:
             }
 
     def reinitialiser(self) -> None:
+        from ..models.facturation import Facture, LigneReleve, SaisieTemps
         with self.session_factory() as session:
+            # La facturation part d'abord : le relevé référence les factures,
+            # et les lignes de temps les référencent aussi.
+            session.query(LigneReleve).delete()
+            session.query(SaisieTemps).delete()
+            session.query(Facture).delete()
             session.query(Extraction).delete()
             session.query(Piece).delete()
             session.query(Quarantaine).delete()

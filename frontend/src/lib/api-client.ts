@@ -125,6 +125,87 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+
+// ─────────────────────────── Facturation client ───────────────────────────
+
+export interface SemaineTemps {
+  semaine: string;
+  du: string;
+  heures: number;
+  montant: number;
+}
+
+export interface LigneSynthese {
+  dossier_code: string;
+  raison_sociale: string;
+  heures: number;
+  taux_horaire: number;
+  montant_ht: number;
+  heures_a_facturer: number;
+  montant_a_facturer: number;
+  jours: number;
+  semaines: SemaineTemps[];
+  facture_numero?: string | null;
+  facture_etat?: string | null;
+}
+
+export interface SyntheseFacturation {
+  periode: string;
+  lignes: LigneSynthese[];
+  total_heures: number;
+  total_ht: number;
+  total_tva: number;
+  total_ttc: number;
+  total_a_facturer: number;
+  dossiers_pointes: number;
+}
+
+export interface FactureHonoraires {
+  id: number;
+  numero: string;
+  dossier_code: string;
+  raison_sociale: string;
+  alias?: string | null;
+  periode: string;
+  emise_le: string;
+  echeance_le: string;
+  heures: number;
+  montant_ht: number;
+  montant_tva: number;
+  montant_ttc: number;
+  etat: "brouillon" | "envoyee" | "encaissee" | "partielle" | "impayee" | string;
+  envoyee_le?: string | null;
+  envoyee_a?: string | null;
+  relances: number;
+  montant_encaisse: number;
+  reste_du: number;
+  jours_retard: number;
+}
+
+export interface LigneReleve {
+  id: number;
+  jour: string;
+  libelle: string;
+  montant: number;
+  reference?: string | null;
+  rapprochement: "exact" | "approchant" | "aucun" | string;
+  facture_numero?: string | null;
+}
+
+export interface SaisieTemps {
+  id: number;
+  dossier_code: string;
+  raison_sociale: string;
+  jour: string;
+  heures: number;
+  taux_horaire: number;
+  montant: number;
+  libelle?: string | null;
+  saisi_par?: string | null;
+  facturee: boolean;
+  facture_id?: number | null;
+}
+
 export const api = {
   // Stats
   getStats: () => request<StatsCompteurs>("/stats"),
@@ -169,6 +250,68 @@ export const api = {
   // Quarantaine
   getQuarantaine: () => request<Quarantaine[]>("/quarantaine"),
   viderQuarantaine: () => request<{ message: string }>("/quarantaine", { method: "DELETE" }),
+
+
+  // Facturation client
+  getSynthese: (periode?: string) =>
+    request<SyntheseFacturation>(`/facturation/synthese${periode ? `?periode=${periode}` : ""}`),
+  getTemps: (params?: { periode?: string; dossier?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.periode) q.append("periode", params.periode);
+    if (params?.dossier) q.append("dossier", params.dossier);
+    const qs = q.toString();
+    return request<SaisieTemps[]>(`/facturation/temps${qs ? `?${qs}` : ""}`);
+  },
+  saisirTemps: (data: {
+    dossier_code: string;
+    jour: string;
+    heures: number;
+    taux_horaire?: number;
+    libelle?: string;
+    saisi_par?: string;
+  }) =>
+    request<{ id: number }>("/facturation/temps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  supprimerTemps: (id: number) =>
+    request<{ supprimee: number }>(`/facturation/temps/${id}`, { method: "DELETE" }),
+  genererFactures: (periode?: string, dossiers?: string[]) =>
+    request<{ periode: string; creees: unknown[]; ignorees: unknown[]; message: string }>(
+      "/facturation/generer",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periode: periode ?? null, dossiers: dossiers ?? null }),
+      },
+    ),
+  getFactures: (params?: { periode?: string; etat?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.periode) q.append("periode", params.periode);
+    if (params?.etat) q.append("etat", params.etat);
+    const qs = q.toString();
+    return request<FactureHonoraires[]>(`/facturation/factures${qs ? `?${qs}` : ""}`);
+  },
+  envoyerFactures: (ids: number[]) =>
+    request<{ envoyees: unknown[]; simule: boolean; message: string }>("/facturation/factures/envoyer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    }),
+  relancerFactures: (ids: number[]) =>
+    request<{ relancees: unknown[]; simule: boolean; message: string }>("/facturation/factures/relancer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    }),
+  getReleve: () => request<LigneReleve[]>("/facturation/releve"),
+  simulerReleve: () =>
+    request<{ message: string; lignes: number }>("/facturation/releve/simuler", { method: "POST" }),
+  rapprocher: () =>
+    request<{ exacts: number; approchants: number; message: string }>("/facturation/rapprocher", {
+      method: "POST",
+    }),
 
   // Sage exports
   getSageApercu: () => request<SageApercu>("/exports/apercu"),

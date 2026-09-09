@@ -10,7 +10,7 @@ from .core.config import settings
 from .core.database import init_db
 from .api.v1.api import api_router
 from .services.store import DepotPostgres
-from .services.samples_bootstrap import amorcer
+from .services.samples_bootstrap import amorcer, amorcer_facturation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("boite_unique")
@@ -40,8 +40,10 @@ async def lifespan(app: FastAPI):
             logger.info("Amorçage des dossiers clients initiaux...")
             amorcer(depot)
 
+        amorcer_facturation()
+
         # Si aucune pièce en base, amorçage automatique des pièces & factures de démo
-        if depot.stats().get("pieces", 0) == 0:
+        if depot.compteurs().get("pieces", 0) == 0:
             logger.info("Amorçage automatique des pièces comptables d'exemple...")
             try:
                 import sys

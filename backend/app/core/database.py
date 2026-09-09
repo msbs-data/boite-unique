@@ -39,7 +39,7 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     """Create tables if they don't exist."""
     # Import all models before creating tables
-    from ..models import dossier, piece, extraction, quarantaine, export  # noqa: F401
+    from ..models import dossier, piece, extraction, quarantaine, export, facturation  # noqa: F401
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables verified and initialized.")

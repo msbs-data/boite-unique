@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from ....core.config import settings
 from ....services.ingest import SUFFIXES_STOCKES, traiter_mail
-from ....services.samples_bootstrap import amorcer
+from ....services.samples_bootstrap import amorcer, amorcer_facturation
 from ....services.store import DepotPostgres
 
 router = APIRouter()
@@ -132,4 +132,5 @@ def reinitialiser_demonstration():
 
     # Re-seed default dossiers
     amorcer(depot)
+    amorcer_facturation()
     return {"message": "La base de données et les fichiers de travail ont été réinitialisés avec succès."}
