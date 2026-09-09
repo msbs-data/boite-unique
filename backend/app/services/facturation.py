@@ -78,6 +78,98 @@ class Depot:
             s.commit()
             return True
 
+    def modifier_temps(self, ligne_id: int, heures: float | None = None,
+                       taux_horaire: float | None = None, jour: str | None = None,
+                       libelle: str | None = None) -> dict:
+        """Corrige une ligne de temps. Refusé dès qu'elle est facturée.
+
+        Une heure partie en facture ne se réécrit pas : la facture serait fausse
+        sans que rien ne le signale. Pour corriger après coup, il faut annuler
+        la facture — et ça, c'est une décision comptable, pas un clic.
+        """
+        with self._s() as s:
+            l = s.get(SaisieTemps, ligne_id)
+            if l is None:
+                raise LookupError("Ligne introuvable.")
+            if l.facture_id is not None:
+                raise ValueError(
+                    "Cette ligne est déjà portée par une facture : elle ne peut plus être modifiée."
+                )
+            if heures is not None:
+                if heures <= 0 or heures > 24:
+                    raise ValueError("Le nombre d'heures doit être compris entre 0 et 24.")
+                l.heures = float(heures)
+            if taux_horaire is not None:
+                if taux_horaire <= 0:
+                    raise ValueError("Le coût horaire doit être positif.")
+                l.taux_horaire = float(taux_horaire)
+            if jour is not None:
+                l.jour = jour
+            if libelle is not None:
+                l.libelle = libelle or None
+            s.commit()
+            return {"id": l.id, "heures": l.heures, "taux_horaire": l.taux_horaire,
+                    "jour": l.jour, "libelle": l.libelle,
+                    "montant": _arrondi(l.heures * l.taux_horaire)}
+
+    def appliquer_taux(self, dossier_code: str, taux_horaire: float,
+                       periode: str | None = None) -> dict:
+        """Applique un coût horaire à toutes les lignes non facturées d'un dossier."""
+        if taux_horaire <= 0:
+            raise ValueError("Le coût horaire doit être positif.")
+        periode = periode or _periode_courante()
+        deb, fin = _bornes(periode)
+        with self._s() as s:
+            d = s.query(Dossier).filter(Dossier.code == dossier_code).first()
+            if d is None:
+                raise LookupError(f"Dossier inconnu : {dossier_code}")
+            lignes = (s.query(SaisieTemps)
+                       .filter(SaisieTemps.dossier_id == d.id, SaisieTemps.facture_id.is_(None),
+                               SaisieTemps.jour >= deb, SaisieTemps.jour <= fin).all())
+            for l in lignes:
+                l.taux_horaire = float(taux_horaire)
+            s.commit()
+            return {"dossier": dossier_code, "lignes": len(lignes),
+                    "message": f"{len(lignes)} ligne(s) repassée(s) à {taux_horaire:.2f} €/h. "
+                               "Les lignes déjà facturées n'ont pas bougé."}
+
+    def attribuer(self, ligne_id: int, facture_id: int | None) -> dict:
+        """Rattache — ou détache — une ligne de relevé à une facture, à la main.
+
+        C'est la sortie de secours des cas que le rapprochement automatique
+        refuse de trancher : un acompte, ou deux factures au même montant.
+        """
+        with self._s() as s:
+            l = s.get(LigneReleve, ligne_id)
+            if l is None:
+                raise LookupError("Ligne de relevé introuvable.")
+            if facture_id is None:
+                l.facture_id, l.rapprochement = None, "aucun"
+            else:
+                f = s.get(Facture, facture_id)
+                if f is None:
+                    raise LookupError("Facture introuvable.")
+                l.facture_id, l.rapprochement = f.id, "manuel"
+            s.commit()
+        self._recalculer_etats()
+        return {"ligne": ligne_id, "facture": facture_id,
+                "message": "Attribution enregistrée." if facture_id else "Attribution retirée."}
+
+    def _recalculer_etats(self) -> None:
+        with self._s() as s:
+            for f in s.query(Facture).filter(Facture.etat != "brouillon").all():
+                encaisse = sum(x.montant for x in
+                               s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+                if encaisse >= f.montant_ttc - TOLERANCE_RAPPROCHEMENT:
+                    f.etat = "encaissee"
+                elif encaisse > 0:
+                    f.etat = "partielle"
+                elif date.fromisoformat(f.echeance_le) < date.today():
+                    f.etat = "impayee"
+                else:
+                    f.etat = "envoyee"
+            s.commit()
+
     def temps(self, periode: str | None = None, dossier_code: str = "") -> list[dict]:
         periode = periode or _periode_courante()
         deb, fin = _bornes(periode)

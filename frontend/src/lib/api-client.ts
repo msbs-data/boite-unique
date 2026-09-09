@@ -125,7 +125,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-
 // ─────────────────────────── Facturation client ───────────────────────────
 
 export interface SemaineTemps {
@@ -173,7 +172,8 @@ export interface FactureHonoraires {
   montant_ht: number;
   montant_tva: number;
   montant_ttc: number;
-  etat: "brouillon" | "envoyee" | "encaissee" | "partielle" | "impayee" | string;
+  etat:
+    "brouillon" | "envoyee" | "encaissee" | "partielle" | "impayee" | string;
   envoyee_le?: string | null;
   envoyee_a?: string | null;
   relances: number;
@@ -212,7 +212,11 @@ export const api = {
 
   // Dossiers
   getDossiers: () => request<Dossier[]>("/dossiers"),
-  createDossier: (data: { code: string; raison_sociale: string; alias: string }) =>
+  createDossier: (data: {
+    code: string;
+    raison_sociale: string;
+    alias: string;
+  }) =>
     request<Dossier>("/dossiers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -237,24 +241,33 @@ export const api = {
 
   // Actions
   recevoirEmails: (tout = false) =>
-    request<{ message: string; traites: number; details: unknown[] }>(`/actions/recevoir?tout=${tout}`, {
-      method: "POST",
-    }),
+    request<{ message: string; traites: number; details: unknown[] }>(
+      `/actions/recevoir?tout=${tout}`,
+      {
+        method: "POST",
+      },
+    ),
   deposerFichier: (formData: FormData) =>
-    request<{ message: string; resultat: Record<string, unknown> }>("/actions/deposer", {
-      method: "POST",
-      body: formData,
-    }),
-  reinitialiser: () => request<{ message: string }>("/actions/reinitialiser", { method: "POST" }),
+    request<{ message: string; resultat: Record<string, unknown> }>(
+      "/actions/deposer",
+      {
+        method: "POST",
+        body: formData,
+      },
+    ),
+  reinitialiser: () =>
+    request<{ message: string }>("/actions/reinitialiser", { method: "POST" }),
 
   // Quarantaine
   getQuarantaine: () => request<Quarantaine[]>("/quarantaine"),
-  viderQuarantaine: () => request<{ message: string }>("/quarantaine", { method: "DELETE" }),
-
+  viderQuarantaine: () =>
+    request<{ message: string }>("/quarantaine", { method: "DELETE" }),
 
   // Facturation client
   getSynthese: (periode?: string) =>
-    request<SyntheseFacturation>(`/facturation/synthese${periode ? `?periode=${periode}` : ""}`),
+    request<SyntheseFacturation>(
+      `/facturation/synthese${periode ? `?periode=${periode}` : ""}`,
+    ),
   getTemps: (params?: { periode?: string; dossier?: string }) => {
     const q = new URLSearchParams();
     if (params?.periode) q.append("periode", params.periode);
@@ -275,47 +288,117 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
-  supprimerTemps: (id: number) =>
-    request<{ supprimee: number }>(`/facturation/temps/${id}`, { method: "DELETE" }),
-  genererFactures: (periode?: string, dossiers?: string[]) =>
-    request<{ periode: string; creees: unknown[]; ignorees: unknown[]; message: string }>(
-      "/facturation/generer",
+  modifierTemps: (
+    id: number,
+    data: {
+      heures?: number;
+      taux_horaire?: number;
+      jour?: string;
+      libelle?: string;
+    },
+  ) =>
+    request<{
+      id: number;
+      heures: number;
+      taux_horaire: number;
+      jour: string;
+      libelle?: string;
+      montant: number;
+    }>(`/facturation/temps/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+  appliquerTaux: (
+    dossier_code: string,
+    taux_horaire: number,
+    periode?: string,
+  ) =>
+    request<{ dossier: string; lignes: number; message: string }>(
+      "/facturation/taux",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periode: periode ?? null, dossiers: dossiers ?? null }),
+        body: JSON.stringify({
+          dossier_code,
+          taux_horaire,
+          periode: periode ?? null,
+        }),
       },
     ),
+  attribuerLigne: (ligneId: number, facture_id: number | null) =>
+    request<{ ligne: number; facture: number | null; message: string }>(
+      `/facturation/releve/${ligneId}/attribuer`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ facture_id }),
+      },
+    ),
+  supprimerTemps: (id: number) =>
+    request<{ supprimee: number }>(`/facturation/temps/${id}`, {
+      method: "DELETE",
+    }),
+  genererFactures: (periode?: string, dossiers?: string[]) =>
+    request<{
+      periode: string;
+      creees: unknown[];
+      ignorees: unknown[];
+      message: string;
+    }>("/facturation/generer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        periode: periode ?? null,
+        dossiers: dossiers ?? null,
+      }),
+    }),
   getFactures: (params?: { periode?: string; etat?: string }) => {
     const q = new URLSearchParams();
     if (params?.periode) q.append("periode", params.periode);
     if (params?.etat) q.append("etat", params.etat);
     const qs = q.toString();
-    return request<FactureHonoraires[]>(`/facturation/factures${qs ? `?${qs}` : ""}`);
+    return request<FactureHonoraires[]>(
+      `/facturation/factures${qs ? `?${qs}` : ""}`,
+    );
   },
   envoyerFactures: (ids: number[]) =>
-    request<{ envoyees: unknown[]; simule: boolean; message: string }>("/facturation/factures/envoyer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    }),
+    request<{ envoyees: unknown[]; simule: boolean; message: string }>(
+      "/facturation/factures/envoyer",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      },
+    ),
   relancerFactures: (ids: number[]) =>
-    request<{ relancees: unknown[]; simule: boolean; message: string }>("/facturation/factures/relancer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids }),
-    }),
+    request<{ relancees: unknown[]; simule: boolean; message: string }>(
+      "/facturation/factures/relancer",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      },
+    ),
   getReleve: () => request<LigneReleve[]>("/facturation/releve"),
   simulerReleve: () =>
-    request<{ message: string; lignes: number }>("/facturation/releve/simuler", { method: "POST" }),
+    request<{ message: string; lignes: number }>(
+      "/facturation/releve/simuler",
+      { method: "POST" },
+    ),
   rapprocher: () =>
-    request<{ exacts: number; approchants: number; message: string }>("/facturation/rapprocher", {
-      method: "POST",
-    }),
+    request<{ exacts: number; approchants: number; message: string }>(
+      "/facturation/rapprocher",
+      {
+        method: "POST",
+      },
+    ),
 
   // Sage exports
   getSageApercu: () => request<SageApercu>("/exports/apercu"),
-  genererExportSage: () => request<ExportHistorique>("/exports/generer", { method: "POST" }),
+  genererExportSage: () =>
+    request<ExportHistorique>("/exports/generer", { method: "POST" }),
   getExports: () => request<ExportHistorique[]>("/exports"),
-  getExportDownloadUrl: (nomFichier: string) => `${API_BASE}/exports/${encodeURIComponent(nomFichier)}/telecharger`,
+  getExportDownloadUrl: (nomFichier: string) =>
+    `${API_BASE}/exports/${encodeURIComponent(nomFichier)}/telecharger`,
 };

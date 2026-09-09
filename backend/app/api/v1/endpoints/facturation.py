@@ -4,7 +4,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from ....schemas.facturation import (
-    FactureOut, GenererIn, IdsIn, LigneReleveOut, SyntheseOut, TempsCreate, TempsOut,
+    AttributionIn, FactureOut, GenererIn, IdsIn, LigneReleveOut, SyntheseOut,
+    TauxIn, TempsCreate, TempsOut, TempsUpdate,
 )
 from ....services.facturation import Depot
 
@@ -32,6 +33,36 @@ def saisir_temps(entree: TempsCreate):
                                          entree.taux_horaire, entree.libelle, entree.saisi_par)}
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+
+@router.put("/facturation/temps/{ligne_id}", summary="Corriger une ligne non facturée")
+def modifier_temps(ligne_id: int, entree: TempsUpdate):
+    try:
+        return depot.modifier_temps(ligne_id, entree.heures, entree.taux_horaire,
+                                    entree.jour, entree.libelle)
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err)) from err
+
+
+@router.post("/facturation/taux", summary="Appliquer un coût horaire à un dossier")
+def appliquer_taux(entree: TauxIn):
+    try:
+        return depot.appliquer_taux(entree.dossier_code, entree.taux_horaire, entree.periode)
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+
+@router.post("/facturation/releve/{ligne_id}/attribuer",
+             summary="Rattacher ou détacher une ligne de relevé")
+def attribuer(ligne_id: int, entree: AttributionIn):
+    try:
+        return depot.attribuer(ligne_id, entree.facture_id)
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
 
 
 @router.delete("/facturation/temps/{ligne_id}", summary="Supprimer une ligne non facturée")

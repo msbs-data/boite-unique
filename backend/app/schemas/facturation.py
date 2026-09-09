@@ -101,3 +101,20 @@ class GenererIn(BaseModel):
 
 class IdsIn(BaseModel):
     ids: List[int] = Field(min_length=1)
+
+
+class TempsUpdate(BaseModel):
+    heures: Optional[float] = Field(default=None, gt=0, le=24)
+    taux_horaire: Optional[float] = Field(default=None, gt=0)
+    jour: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    libelle: Optional[str] = None
+
+
+class TauxIn(BaseModel):
+    dossier_code: str
+    taux_horaire: float = Field(gt=0)
+    periode: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+
+
+class AttributionIn(BaseModel):
+    facture_id: Optional[int] = None
