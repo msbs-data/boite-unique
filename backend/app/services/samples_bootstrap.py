@@ -46,7 +46,7 @@ def amorcer_facturation(periode: str | None = None) -> dict:
     et un règlement partiel — pour que le rapprochement montre ses trois issues.
     """
     from datetime import date
-    from .facturation import Depot, TAUX_TVA, taux_par_defaut
+    from .facturation import Depot, taux_par_defaut
 
     depot = Depot()
     periode = periode or date.today().strftime("%Y-%m")

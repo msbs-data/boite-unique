@@ -14,8 +14,11 @@ class SaisieTemps(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     dossier_id = Column(Integer, ForeignKey("dossier.id", ondelete="CASCADE"), nullable=False, index=True)
     jour = Column(String(10), nullable=False, index=True)          # AAAA-MM-JJ
+    # Les heures sont une quantité, pas un montant : un flottant est légitime.
     heures = Column(Float, nullable=False)
-    taux_horaire = Column(Float, nullable=False)
+    # Les montants sont en centimes entiers. Le suffixe _c est la seule
+    # protection contre une multiplication faite dans la mauvaise unité.
+    taux_horaire_c = Column(Integer, nullable=False)
     libelle = Column(String(255), nullable=True)
     saisi_par = Column(String(120), nullable=True)
     # Nul tant que la ligne n'est pas facturée. C'est ce champ qui garantit
@@ -38,9 +41,9 @@ class Facture(Base):
     emise_le = Column(String(10), nullable=False)
     echeance_le = Column(String(10), nullable=False)
     heures = Column(Float, nullable=False, default=0.0)
-    montant_ht = Column(Float, nullable=False, default=0.0)
-    montant_tva = Column(Float, nullable=False, default=0.0)
-    montant_ttc = Column(Float, nullable=False, default=0.0)
+    montant_ht_c = Column(Integer, nullable=False, default=0)
+    montant_tva_c = Column(Integer, nullable=False, default=0)
+    montant_ttc_c = Column(Integer, nullable=False, default=0)
     # brouillon -> envoyee -> encaissee | partielle | impayee
     etat = Column(String(24), nullable=False, default="brouillon", index=True)
     envoyee_le = Column(String(20), nullable=True)
@@ -56,7 +59,7 @@ class Facture(Base):
 
 
 class LigneReleve(Base):
-    """Une ligne du relevé bancaire du cabinet.
+    """Une ligne du relevé bancaire du cabinet. Montant en centimes.
 
     Le rapprochement se fait sur le relevé que la banque fournit, pas par une
     interface bancaire tierce : aucune donnée ne sort du cabinet, et il n'y a
@@ -68,10 +71,24 @@ class LigneReleve(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     jour = Column(String(10), nullable=False, index=True)
     libelle = Column(String(255), nullable=False)
-    montant = Column(Float, nullable=False)
+    montant_c = Column(Integer, nullable=False)
     reference = Column(String(64), nullable=True)
     facture_id = Column(Integer, ForeignKey("facture.id", ondelete="SET NULL"), nullable=True, index=True)
     # exact | approchant | aucun
     rapprochement = Column(String(16), nullable=False, default="aucun", index=True)
 
     facture = relationship("Facture")
+
+
+class CompteurPiece(Base):
+    """Le plus grand numéro jamais attribué, par famille de pièces.
+
+    Volontairement séparé des pièces elles-mêmes : c'est ce qui garantit
+    qu'une suppression ne libère pas un numéro déjà remis à un client.
+    """
+
+    __tablename__ = "compteur_piece"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cle = Column(String(64), nullable=False, unique=True, index=True)
+    dernier = Column(Integer, nullable=False, default=0)

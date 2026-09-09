@@ -21,11 +21,26 @@ from sqlalchemy.orm import Session
 
 from ..core import database as db_mod
 from ..models.dossier import Dossier
-from ..models.facturation import Facture, LigneReleve, SaisieTemps
+from ..models.facturation import CompteurPiece, Facture, LigneReleve, SaisieTemps
 
-TAUX_TVA = 0.20
+TAUX_TVA_MILLIEMES = 200          # 20,0 % — en millièmes, pour rester entier
 DELAI_PAIEMENT_JOURS = 30
-TOLERANCE_RAPPROCHEMENT = 0.01
+
+# Tous les montants circulent en centimes entiers à l'intérieur du service.
+# La conversion en euros se fait à la sortie, et nulle part ailleurs.
+
+
+def en_centimes(euros: float) -> int:
+    return int(round(euros * 100))
+
+
+def en_euros(centimes: int) -> float:
+    return round(centimes / 100, 2)
+
+
+def montant_ligne_c(heures: float, taux_c: int) -> int:
+    """Heures × taux. On convertit d'abord, on multiplie ensuite (§3)."""
+    return int(round(heures * taux_c))
 
 
 def _periode_courante() -> str:
@@ -38,8 +53,8 @@ def _bornes(periode: str) -> tuple[str, str]:
     return f"{periode}-01", f"{periode}-{dernier:02d}"
 
 
-def _arrondi(v: float) -> float:
-    return round(v + 1e-9, 2)
+def _tva_c(ht_c: int) -> int:
+    return int(round(ht_c * TAUX_TVA_MILLIEMES / 1000))
 
 
 @dataclass
@@ -62,7 +77,8 @@ class Depot:
                 raise ValueError(f"Dossier inconnu : {dossier_code}")
             taux = taux_horaire if taux_horaire is not None else taux_par_defaut(d.code)
             ligne = SaisieTemps(dossier_id=d.id, jour=jour, heures=float(heures),
-                                taux_horaire=float(taux), libelle=libelle, saisi_par=saisi_par)
+                                taux_horaire_c=en_centimes(taux), libelle=libelle,
+                                saisi_par=saisi_par)
             s.add(ligne)
             s.commit()
             return ligne.id
@@ -102,15 +118,16 @@ class Depot:
             if taux_horaire is not None:
                 if taux_horaire <= 0:
                     raise ValueError("Le coût horaire doit être positif.")
-                l.taux_horaire = float(taux_horaire)
+                l.taux_horaire_c = en_centimes(taux_horaire)
             if jour is not None:
                 l.jour = jour
             if libelle is not None:
                 l.libelle = libelle or None
             s.commit()
-            return {"id": l.id, "heures": l.heures, "taux_horaire": l.taux_horaire,
+            return {"id": l.id, "heures": l.heures,
+                    "taux_horaire": en_euros(l.taux_horaire_c),
                     "jour": l.jour, "libelle": l.libelle,
-                    "montant": _arrondi(l.heures * l.taux_horaire)}
+                    "montant": en_euros(montant_ligne_c(l.heures, l.taux_horaire_c))}
 
     def appliquer_taux(self, dossier_code: str, taux_horaire: float,
                        periode: str | None = None) -> dict:
@@ -127,7 +144,7 @@ class Depot:
                        .filter(SaisieTemps.dossier_id == d.id, SaisieTemps.facture_id.is_(None),
                                SaisieTemps.jour >= deb, SaisieTemps.jour <= fin).all())
             for l in lignes:
-                l.taux_horaire = float(taux_horaire)
+                l.taux_horaire_c = en_centimes(taux_horaire)
             s.commit()
             return {"dossier": dossier_code, "lignes": len(lignes),
                     "message": f"{len(lignes)} ligne(s) repassée(s) à {taux_horaire:.2f} €/h. "
@@ -158,11 +175,11 @@ class Depot:
     def _recalculer_etats(self) -> None:
         with self._s() as s:
             for f in s.query(Facture).filter(Facture.etat != "brouillon").all():
-                encaisse = sum(x.montant for x in
-                               s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
-                if encaisse >= f.montant_ttc - TOLERANCE_RAPPROCHEMENT:
+                encaisse_c = sum(x.montant_c for x in
+                                 s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+                if encaisse_c >= f.montant_ttc_c:
                     f.etat = "encaissee"
-                elif encaisse > 0:
+                elif encaisse_c > 0:
                     f.etat = "partielle"
                 elif date.fromisoformat(f.echeance_le) < date.today():
                     f.etat = "impayee"
@@ -183,8 +200,9 @@ class Depot:
             for t, d in q.order_by(SaisieTemps.jour.desc(), SaisieTemps.id.desc()).all():
                 lignes.append({
                     "id": t.id, "dossier_code": d.code, "raison_sociale": d.raison_sociale,
-                    "jour": t.jour, "heures": t.heures, "taux_horaire": t.taux_horaire,
-                    "montant": _arrondi(t.heures * t.taux_horaire),
+                    "jour": t.jour, "heures": t.heures,
+                    "taux_horaire": en_euros(t.taux_horaire_c),
+                    "montant": en_euros(montant_ligne_c(t.heures, t.taux_horaire_c)),
                     "libelle": t.libelle, "saisi_par": t.saisi_par,
                     "facturee": t.facture_id is not None, "facture_id": t.facture_id,
                 })
@@ -200,7 +218,7 @@ class Depot:
         with self._s() as s:
             dossiers = s.query(Dossier).filter(Dossier.actif == True).order_by(Dossier.raison_sociale).all()  # noqa: E712
             factures = {f.dossier_id: f for f in s.query(Facture).filter(Facture.periode == periode).all()}
-            lignes, tot_h, tot_ht, tot_af = [], 0.0, 0.0, 0.0
+            lignes, tot_h, tot_ht_c, tot_af_c = [], 0.0, 0, 0
             for d in dossiers:
                 ts = (s.query(SaisieTemps)
                        .filter(SaisieTemps.dossier_id == d.id,
@@ -208,10 +226,11 @@ class Depot:
                 if not ts:
                     continue
                 heures = sum(t.heures for t in ts)
-                montant = sum(t.heures * t.taux_horaire for t in ts)
-                a_facturer = sum(t.heures * t.taux_horaire for t in ts if t.facture_id is None)
+                montant_c = sum(montant_ligne_c(t.heures, t.taux_horaire_c) for t in ts)
+                a_facturer_c = sum(montant_ligne_c(t.heures, t.taux_horaire_c)
+                                   for t in ts if t.facture_id is None)
                 h_a_facturer = sum(t.heures for t in ts if t.facture_id is None)
-                taux = _arrondi(montant / heures) if heures else 0.0
+                taux_c = int(round(montant_c / heures)) if heures else 0
 
                 semaines: dict[str, dict] = {}
                 for t in ts:
@@ -220,49 +239,68 @@ class Depot:
                     e = semaines.setdefault(cle, {"semaine": cle, "heures": 0.0, "montant": 0.0,
                                                   "du": (j - timedelta(days=j.weekday())).isoformat()})
                     e["heures"] += t.heures
-                    e["montant"] = _arrondi(e["montant"] + t.heures * t.taux_horaire)
+                    e["montant"] = en_euros(en_centimes(e["montant"])
+                                            + montant_ligne_c(t.heures, t.taux_horaire_c))
 
                 f = factures.get(d.id)
                 lignes.append({
                     "dossier_code": d.code, "raison_sociale": d.raison_sociale,
-                    "heures": _arrondi(heures), "taux_horaire": taux,
-                    "montant_ht": _arrondi(montant),
-                    "heures_a_facturer": _arrondi(h_a_facturer),
-                    "montant_a_facturer": _arrondi(a_facturer),
-                    "jours": _arrondi(heures / 7),          # journée de 7 heures
+                    "heures": round(heures, 2), "taux_horaire": en_euros(taux_c),
+                    "montant_ht": en_euros(montant_c),
+                    "heures_a_facturer": round(h_a_facturer, 2),
+                    "montant_a_facturer": en_euros(a_facturer_c),
+                    "jours": round(heures / 7, 2),          # journée de 7 heures
                     "semaines": sorted(semaines.values(), key=lambda x: x["semaine"]),
                     "facture_numero": f.numero if f else None,
                     "facture_etat": f.etat if f else None,
                 })
                 tot_h += heures
-                tot_ht += montant
-                tot_af += a_facturer
+                tot_ht_c += montant_c
+                tot_af_c += a_facturer_c
             return {
                 "periode": periode, "lignes": lignes,
-                "total_heures": _arrondi(tot_h),
-                "total_ht": _arrondi(tot_ht),
-                "total_tva": _arrondi(tot_ht * TAUX_TVA),
-                "total_ttc": _arrondi(tot_ht * (1 + TAUX_TVA)),
-                "total_a_facturer": _arrondi(tot_af),
+                "total_heures": round(tot_h, 2),
+                "total_ht": en_euros(tot_ht_c),
+                "total_tva": en_euros(_tva_c(tot_ht_c)),
+                "total_ttc": en_euros(tot_ht_c + _tva_c(tot_ht_c)),
+                "total_a_facturer": en_euros(tot_af_c),
                 "dossiers_pointes": len(lignes),
             }
 
     # ------------------------------------------------------------- factures
 
     def _numero(self, s: Session, periode: str) -> str:
-        n = s.query(Facture).count() + 1
-        return f"FH-{periode.replace('-', '')}-{n:03d}"
+        """Repère persistant du plus grand numéro jamais attribué (§2).
+
+        Un compteur déduit de l'existant — count() ou MAX — réattribue le
+        numéro d'une facture supprimée : deux pièces remises au client
+        porteraient le même. Un trou après suppression est normal, et
+        volontairement non rebouché.
+        """
+        cle = f"facture_honoraires:{periode}"
+        rang = s.query(CompteurPiece).filter(CompteurPiece.cle == cle).with_for_update().first()
+        if rang is None:
+            rang = CompteurPiece(cle=cle, dernier=0)
+            s.add(rang)
+            s.flush()
+        rang.dernier += 1
+        return f"FH-{periode.replace('-', '')}-{rang.dernier:03d}"
 
     def generer(self, periode: str | None = None, dossiers: list[str] | None = None) -> dict:
         """Une facture par dossier, sur le temps non encore facturé de la période."""
         periode = periode or _periode_courante()
+        if dossiers is not None and len(dossiers) == 0:
+            return {"periode": periode, "creees": [], "ignorees": [],
+                    "message": "Aucun dossier sélectionné : rien n'a été facturé."}
         deb, fin = _bornes(periode)
         emise = date.today()
         echeance = emise + timedelta(days=DELAI_PAIEMENT_JOURS)
         creees, ignores = [], []
         with self._s() as s:
             q = s.query(Dossier).filter(Dossier.actif == True)  # noqa: E712
-            if dossiers:
+            # §3 : « aucun dossier choisi » n'est pas « tous les dossiers ».
+            # None = paramètre absent ; [] = choix explicite de ne rien facturer.
+            if dossiers is not None:
                 q = q.filter(Dossier.code.in_(dossiers))
             for d in q.order_by(Dossier.raison_sociale).all():
                 ts = (s.query(SaisieTemps)
@@ -274,19 +312,19 @@ class Depot:
                     ignores.append({"dossier": d.code, "motif": "une facture existe déjà pour cette période"})
                     continue
                 heures = sum(t.heures for t in ts)
-                ht = _arrondi(sum(t.heures * t.taux_horaire for t in ts))
-                tva = _arrondi(ht * TAUX_TVA)
+                ht_c = sum(montant_ligne_c(t.heures, t.taux_horaire_c) for t in ts)
+                tva_c = _tva_c(ht_c)
                 f = Facture(numero=self._numero(s, periode), dossier_id=d.id, periode=periode,
                             emise_le=emise.isoformat(), echeance_le=echeance.isoformat(),
-                            heures=_arrondi(heures), montant_ht=ht, montant_tva=tva,
-                            montant_ttc=_arrondi(ht + tva), etat="brouillon")
+                            heures=round(heures, 2), montant_ht_c=ht_c, montant_tva_c=tva_c,
+                            montant_ttc_c=ht_c + tva_c, etat="brouillon")
                 s.add(f)
                 s.flush()
                 for t in ts:
                     t.facture_id = f.id          # l'heure est consommée, définitivement
                 creees.append({"numero": f.numero, "dossier": d.code,
                                "raison_sociale": d.raison_sociale, "heures": f.heures,
-                               "montant_ttc": f.montant_ttc})
+                               "montant_ttc": en_euros(f.montant_ttc_c)})
             s.commit()
         return {"periode": periode, "creees": creees, "ignorees": ignores,
                 "message": f"{len(creees)} facture(s) générée(s)."}
@@ -300,8 +338,8 @@ class Depot:
                 q = q.filter(Facture.etat == etat)
             out = []
             for f, d in q.order_by(Facture.id.desc()).all():
-                encaisse = sum(l.montant for l in
-                               s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+                encaisse_c = sum(l.montant_c for l in
+                                 s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
                 retard = 0
                 if f.etat in ("envoyee", "partielle", "impayee"):
                     retard = max(0, (date.today() - date.fromisoformat(f.echeance_le)).days)
@@ -309,11 +347,12 @@ class Depot:
                     "id": f.id, "numero": f.numero, "dossier_code": d.code,
                     "raison_sociale": d.raison_sociale, "alias": d.alias, "periode": f.periode,
                     "emise_le": f.emise_le, "echeance_le": f.echeance_le, "heures": f.heures,
-                    "montant_ht": f.montant_ht, "montant_tva": f.montant_tva,
-                    "montant_ttc": f.montant_ttc, "etat": f.etat,
+                    "montant_ht": en_euros(f.montant_ht_c),
+                    "montant_tva": en_euros(f.montant_tva_c),
+                    "montant_ttc": en_euros(f.montant_ttc_c), "etat": f.etat,
                     "envoyee_le": f.envoyee_le, "envoyee_a": f.envoyee_a,
-                    "relances": f.relances, "montant_encaisse": _arrondi(encaisse),
-                    "reste_du": _arrondi(f.montant_ttc - encaisse), "jours_retard": retard,
+                    "relances": f.relances, "montant_encaisse": en_euros(encaisse_c),
+                    "reste_du": en_euros(f.montant_ttc_c - encaisse_c), "jours_retard": retard,
                 })
             return out
 
@@ -327,21 +366,24 @@ class Depot:
             lignes = (s.query(SaisieTemps)
                        .filter(SaisieTemps.facture_id == f.id)
                        .order_by(SaisieTemps.jour).all())
-            encaisse = sum(x.montant for x in
-                           s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+            encaisse_c = sum(x.montant_c for x in
+                             s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
             return {
                 "numero": f.numero, "periode": f.periode,
                 "emise_le": f.emise_le, "echeance_le": f.echeance_le,
                 "etat": f.etat, "relances": f.relances,
                 "client": {"code": d.code, "raison_sociale": d.raison_sociale, "alias": d.alias},
                 "lignes": [{"jour": l.jour, "libelle": l.libelle or "Travaux comptables",
-                            "heures": l.heures, "taux_horaire": l.taux_horaire,
-                            "montant": _arrondi(l.heures * l.taux_horaire)} for l in lignes],
-                "heures": f.heures, "montant_ht": f.montant_ht,
-                "taux_tva": TAUX_TVA, "montant_tva": f.montant_tva,
-                "montant_ttc": f.montant_ttc,
-                "montant_encaisse": _arrondi(encaisse),
-                "reste_du": _arrondi(f.montant_ttc - encaisse),
+                            "heures": l.heures,
+                            "taux_horaire": en_euros(l.taux_horaire_c),
+                            "montant": en_euros(montant_ligne_c(l.heures, l.taux_horaire_c))}
+                           for l in lignes],
+                "heures": f.heures, "montant_ht": en_euros(f.montant_ht_c),
+                "taux_tva": TAUX_TVA_MILLIEMES / 1000,
+                "montant_tva": en_euros(f.montant_tva_c),
+                "montant_ttc": en_euros(f.montant_ttc_c),
+                "montant_encaisse": en_euros(encaisse_c),
+                "reste_du": en_euros(f.montant_ttc_c - encaisse_c),
             }
 
     def envoyer(self, ids: list[int]) -> dict:
@@ -374,14 +416,15 @@ class Depot:
         with self._s() as s:
             n = 0
             for l in lignes:
+                montant_c = en_centimes(float(l["montant"]))
                 deja = (s.query(LigneReleve)
                          .filter(LigneReleve.jour == l["jour"],
                                  LigneReleve.libelle == l["libelle"],
-                                 LigneReleve.montant == float(l["montant"])).first())
+                                 LigneReleve.montant_c == montant_c).first())
                 if deja:
                     continue
                 s.add(LigneReleve(jour=l["jour"], libelle=l["libelle"],
-                                  montant=float(l["montant"]), reference=l.get("reference")))
+                                  montant_c=montant_c, reference=l.get("reference")))
                 n += 1
             s.commit()
             return n
@@ -396,7 +439,7 @@ class Depot:
         exacts = approchants = 0
         with self._s() as s:
             libres = s.query(LigneReleve).filter(LigneReleve.facture_id.is_(None),
-                                                 LigneReleve.montant > 0).all()
+                                                 LigneReleve.montant_c > 0).all()
             ouvertes = s.query(Facture).filter(Facture.etat.in_(["envoyee", "partielle", "impayee"])).all()
             for l in libres:
                 champ = f"{l.libelle} {l.reference or ''}".upper()
@@ -405,19 +448,20 @@ class Depot:
                     l.facture_id, l.rapprochement = trouvee.id, "exact"
                     exacts += 1
                     continue
-                candidates = [f for f in ouvertes
-                              if abs(f.montant_ttc - l.montant) <= TOLERANCE_RAPPROCHEMENT]
+                # En centimes entiers, « au centime près » devient une égalité
+                # stricte : plus aucune tolérance de flottant à régler (§3).
+                candidates = [f for f in ouvertes if f.montant_ttc_c == l.montant_c]
                 if len(candidates) == 1:
                     l.facture_id, l.rapprochement = candidates[0].id, "approchant"
                     approchants += 1
             s.flush()
             # L'état de chaque facture découle de ce qui a été encaissé.
             for f in s.query(Facture).filter(Facture.etat != "brouillon").all():
-                encaisse = sum(x.montant for x in
-                               s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
-                if encaisse >= f.montant_ttc - TOLERANCE_RAPPROCHEMENT:
+                encaisse_c = sum(x.montant_c for x in
+                                 s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+                if encaisse_c >= f.montant_ttc_c:
                     f.etat = "encaissee"
-                elif encaisse > 0:
+                elif encaisse_c > 0:
                     f.etat = "partielle"
                 elif date.fromisoformat(f.echeance_le) < date.today():
                     f.etat = "impayee"
@@ -433,7 +477,7 @@ class Depot:
             for l in s.query(LigneReleve).order_by(LigneReleve.jour.desc(), LigneReleve.id.desc()).all():
                 f = s.get(Facture, l.facture_id) if l.facture_id else None
                 out.append({"id": l.id, "jour": l.jour, "libelle": l.libelle,
-                            "montant": l.montant, "reference": l.reference,
+                            "montant": en_euros(l.montant_c), "reference": l.reference,
                             "rapprochement": l.rapprochement,
                             "facture_numero": f.numero if f else None})
             return out
@@ -450,7 +494,7 @@ class Depot:
             envoyees = (s.query(Facture, Dossier)
                          .join(Dossier, Dossier.id == Facture.dossier_id)
                          .filter(Facture.etat.in_(["envoyee", "impayee"]))
-                         .order_by(Facture.montant_ttc.desc()).all())
+                         .order_by(Facture.montant_ttc_c.desc()).all())
         if not envoyees:
             return {"message": "Aucune facture envoyée : rien à encaisser.", "lignes": 0}
 
@@ -460,13 +504,13 @@ class Depot:
             nom = d.raison_sociale.upper()[:28]
             if rang == 0:          # acompte partiel
                 lignes.append({"jour": jour, "libelle": f"VIR SEPA {nom} ACOMPTE",
-                               "montant": _arrondi(f.montant_ttc / 2), "reference": None})
+                               "montant": en_euros(f.montant_ttc_c // 2), "reference": None})
             elif rang % 3 == 1:    # le numéro de facture est cité
                 lignes.append({"jour": jour, "libelle": f"VIR SEPA {nom} {f.numero}",
-                               "montant": f.montant_ttc, "reference": f.numero})
+                               "montant": en_euros(f.montant_ttc_c), "reference": f.numero})
             elif rang % 3 == 2:    # le montant seul
                 lignes.append({"jour": jour, "libelle": f"VIR SEPA {nom}",
-                               "montant": f.montant_ttc, "reference": None})
+                               "montant": en_euros(f.montant_ttc_c), "reference": None})
             # le reste ne paie pas : ce sont les impayés à relancer
         n = self.importer_releve(lignes)
         return {"message": f"{n} mouvement(s) reçus sur le compte du cabinet.", "lignes": n}
