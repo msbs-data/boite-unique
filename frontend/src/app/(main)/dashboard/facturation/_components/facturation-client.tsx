@@ -393,6 +393,7 @@ export function FacturationClient() {
                     <TableHead className="text-right">Montant HT</TableHead>
                     <TableHead className="text-right">À facturer</TableHead>
                     <TableHead>Facture</TableHead>
+                    <TableHead className="w-28 text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -457,10 +458,38 @@ export function FacturationClient() {
                             </span>
                           )}
                         </TableCell>
+                        <TableCell
+                          className="text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {l.montant_a_facturer > 0 ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7"
+                              disabled={enCours !== null}
+                              onClick={() =>
+                                agir(`facturer-${l.dossier_code}`, () =>
+                                  api.genererFactures(undefined, [
+                                    l.dossier_code,
+                                  ]),
+                                )
+                              }
+                            >
+                              {enCours === `facturer-${l.dossier_code}`
+                                ? "..."
+                                : "Facturer"}
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">
+                              —
+                            </span>
+                          )}
+                        </TableCell>
                       </TableRow>
                       {ouvert === l.dossier_code && (
                         <TableRow className="hover:bg-transparent">
-                          <TableCell colSpan={7} className="bg-muted/40">
+                          <TableCell colSpan={8} className="bg-muted/40">
                             <div className="flex flex-col gap-3 py-2">
                               <div className="flex flex-wrap gap-2">
                                 {l.semaines.map((sem) => (
@@ -658,7 +687,8 @@ export function FacturationClient() {
                   Factures d&apos;honoraires
                 </CardTitle>
                 <CardDescription>
-                  Envoyées à l&apos;adresse du dossier. Échéance à 30 jours.
+                  Aperçu, envoi et relance à l&apos;unité sur chaque ligne — ou
+                  en une fois par les boutons ci-contre. Échéance à 30 jours.
                 </CardDescription>
               </div>
               <div className="flex gap-2">
@@ -671,7 +701,7 @@ export function FacturationClient() {
                     )
                   }
                 >
-                  Relancer les impayées
+                  Tout relancer ({impayees.length})
                 </Button>
                 <Button
                   disabled={enCours !== null || brouillons.length === 0}
@@ -699,18 +729,14 @@ export function FacturationClient() {
                     <TableHead className="text-right">Encaissé</TableHead>
                     <TableHead>Échéance</TableHead>
                     <TableHead>État</TableHead>
+                    <TableHead className="w-40 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {factures.map((f) => (
-                    <TableRow
-                      key={f.id}
-                      className="cursor-pointer"
-                      onClick={() => setApercu(f.id)}
-                      title="Ouvrir l'aperçu avant impression"
-                    >
+                    <TableRow key={f.id}>
                       <TableCell>
-                        <div className="font-mono text-xs font-medium underline-offset-2 hover:underline">
+                        <div className="font-mono text-xs font-medium">
                           {f.numero}
                         </div>
                         {f.relances > 0 && (
@@ -746,6 +772,49 @@ export function FacturationClient() {
                       </TableCell>
                       <TableCell>
                         <EtatFacture etat={f.etat} retard={f.jours_retard} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7"
+                            onClick={() => setApercu(f.id)}
+                          >
+                            Aperçu
+                          </Button>
+                          {f.etat === "brouillon" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7"
+                              disabled={enCours !== null}
+                              onClick={() =>
+                                agir(`envoi-${f.id}`, () =>
+                                  api.envoyerFactures([f.id]),
+                                )
+                              }
+                            >
+                              {enCours === `envoi-${f.id}` ? "..." : "Envoyer"}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-muted-foreground h-7"
+                              disabled={
+                                enCours !== null || f.etat === "encaissee"
+                              }
+                              onClick={() =>
+                                agir(`relance-${f.id}`, () =>
+                                  api.relancerFactures([f.id]),
+                                )
+                              }
+                            >
+                              Relancer
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
