@@ -23,6 +23,9 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { eur, heures, nombre } from "@/lib/format";
+
+import { FactureApercu } from "./facture-apercu";
 import {
   api,
   type FactureHonoraires,
@@ -32,15 +35,6 @@ import {
 } from "@/lib/api-client";
 
 const HEURES_PAR_JOUR = 7;
-
-const eur = (n: number) =>
-  n.toLocaleString("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-  });
-const heures = (n: number) =>
-  `${n.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} h`;
 
 function EtatFacture({ etat, retard }: { etat: string; retard?: number }) {
   const styles: Record<string, string> = {
@@ -129,7 +123,7 @@ function ChampEditable({
         className="text-muted-foreground cursor-not-allowed font-mono tabular-nums"
         title={titreDesactive}
       >
-        {valeur.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}
+        {nombre(valeur)}
         {suffixe}
       </span>
     );
@@ -146,7 +140,7 @@ function ChampEditable({
         className="hover:bg-muted focus-visible:ring-ring rounded px-1.5 py-0.5 font-mono tabular-nums focus-visible:ring-2 focus-visible:outline-none"
         title="Cliquer pour corriger"
       >
-        {valeur.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}
+        {nombre(valeur)}
         {suffixe}
       </button>
     );
@@ -204,6 +198,7 @@ export function FacturationClient() {
   const [chargement, setChargement] = React.useState(true);
   const [enCours, setEnCours] = React.useState<string | null>(null);
   const [ouvert, setOuvert] = React.useState<string | null>(null);
+  const [apercu, setApercu] = React.useState<number | null>(null);
 
   const recharger = React.useCallback(async () => {
     try {
@@ -708,9 +703,14 @@ export function FacturationClient() {
                 </TableHeader>
                 <TableBody>
                   {factures.map((f) => (
-                    <TableRow key={f.id}>
+                    <TableRow
+                      key={f.id}
+                      className="cursor-pointer"
+                      onClick={() => setApercu(f.id)}
+                      title="Ouvrir l'aperçu avant impression"
+                    >
                       <TableCell>
-                        <div className="font-mono text-xs font-medium">
+                        <div className="font-mono text-xs font-medium underline-offset-2 hover:underline">
                           {f.numero}
                         </div>
                         {f.relances > 0 && (
@@ -900,6 +900,8 @@ export function FacturationClient() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <FactureApercu factureId={apercu} onClose={() => setApercu(null)} />
     </div>
   );
 }

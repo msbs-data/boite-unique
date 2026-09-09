@@ -1,4 +1,4 @@
-import { Banknote, FolderOpen, LayoutDashboard, type LucideIcon, Mail, ReceiptText, ShieldAlert, Wallet } from "lucide-react";
+import { Banknote, FolderOpen, LayoutDashboard, type LucideIcon, Mail, ReceiptText, ShieldAlert, Users, Wallet } from "lucide-react";
 
 export type NavBadge = "new" | "soon";
 
@@ -66,6 +66,12 @@ export const sidebarItems: NavGroup[] = [
         title: "Facturation client",
         url: "/dashboard/facturation",
         icon: Wallet,
+      },
+      {
+        id: "paie",
+        title: "Paie — collecte",
+        url: "/dashboard/paie",
+        icon: Users,
       },
       {
         id: "sage",

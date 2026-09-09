@@ -282,3 +282,29 @@ html {
     -webkit-print-color-adjust: exact;
   }
 }
+
+
+/* ── Impression d'une facture ─────────────────────────────────────────────
+   Seul l'aperçu part sur la feuille : pas de barre latérale, pas de dialogue,
+   pas d'ombre. Le navigateur propose « Enregistrer au format PDF ». */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #facture-a-imprimer,
+  #facture-a-imprimer * {
+    visibility: visible;
+  }
+  #facture-a-imprimer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 0 !important;
+    color: #000;
+    background: #fff;
+  }
+  @page {
+    margin: 18mm 16mm;
+    size: A4;
+  }
+}

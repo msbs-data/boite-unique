@@ -182,6 +182,30 @@ export interface FactureHonoraires {
   jours_retard: number;
 }
 
+export interface FactureDetail {
+  numero: string;
+  periode: string;
+  emise_le: string;
+  echeance_le: string;
+  etat: string;
+  relances: number;
+  client: { code: string; raison_sociale: string; alias: string };
+  lignes: {
+    jour: string;
+    libelle: string;
+    heures: number;
+    taux_horaire: number;
+    montant: number;
+  }[];
+  heures: number;
+  montant_ht: number;
+  taux_tva: number;
+  montant_tva: number;
+  montant_ttc: number;
+  montant_encaisse: number;
+  reste_du: number;
+}
+
 export interface LigneReleve {
   id: number;
   jour: string;
@@ -204,6 +228,50 @@ export interface SaisieTemps {
   saisi_par?: string | null;
   facturee: boolean;
   facture_id?: number | null;
+}
+
+export interface VariablePaie {
+  id: number;
+  salarie: string;
+  code: string;
+  libelle: string;
+  valeur: number;
+  unite: string;
+  confiance: number;
+  extrait?: string | null;
+  alerte?: string | null;
+  validee: boolean;
+}
+
+export interface MessagePaie {
+  id: number;
+  canal: "whatsapp" | "gmail" | "telegram" | string;
+  canal_libelle: string;
+  expediteur: string;
+  recu_le: string;
+  contenu: string;
+  periode: string;
+  etat: "a_lire" | "propose" | "valide" | "ecarte" | string;
+  confiance?: number | null;
+  remarque?: string | null;
+  dossier_code?: string | null;
+  raison_sociale?: string | null;
+  variables: VariablePaie[];
+}
+
+export interface ExportPaie {
+  periode: string;
+  lignes: {
+    dossier: string;
+    salarie: string;
+    code: string;
+    valeur: number;
+    unite: string;
+  }[];
+  nb: number;
+  fichier: string;
+  contenu: string;
+  avertissement?: string | null;
 }
 
 export const api = {
@@ -362,6 +430,8 @@ export const api = {
       `/facturation/factures${qs ? `?${qs}` : ""}`,
     );
   },
+  getFactureDetail: (id: number) =>
+    request<FactureDetail>(`/facturation/factures/${id}/detail`),
   envoyerFactures: (ids: number[]) =>
     request<{ envoyees: unknown[]; simule: boolean; message: string }>(
       "/facturation/factures/envoyer",
@@ -393,6 +463,46 @@ export const api = {
         method: "POST",
       },
     ),
+
+  // Paie — collecte des variables
+  getMessagesPaie: (params?: { periode?: string; etat?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.periode) q.append("periode", params.periode);
+    if (params?.etat) q.append("etat", params.etat);
+    const qs = q.toString();
+    return request<MessagePaie[]>(`/paie/messages${qs ? `?${qs}` : ""}`);
+  },
+  recevoirMessagePaie: (data: {
+    canal: string;
+    expediteur: string;
+    contenu: string;
+    dossier_code?: string;
+    periode?: string;
+  }) =>
+    request<{ id: number; variables: number; message: string }>(
+      "/paie/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      },
+    ),
+  corrigerVariablePaie: (id: number, valeur: number) =>
+    request<{ id: number; valeur: number }>(`/paie/variables/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ valeur }),
+    }),
+  validerMessagePaie: (id: number) =>
+    request<{ message: string }>(`/paie/messages/${id}/valider`, {
+      method: "POST",
+    }),
+  ecarterMessagePaie: (id: number) =>
+    request<{ message: string }>(`/paie/messages/${id}/ecarter`, {
+      method: "POST",
+    }),
+  getExportPaie: (periode?: string) =>
+    request<ExportPaie>(`/paie/export${periode ? `?periode=${periode}` : ""}`),
 
   // Sage exports
   getSageApercu: () => request<SageApercu>("/exports/apercu"),

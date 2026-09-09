@@ -85,6 +85,15 @@ def lister_factures(periode: str = "", etat: str = ""):
     return depot.factures(periode, etat)
 
 
+@router.get("/facturation/factures/{facture_id}/detail",
+            summary="Détail d'une facture, pour son édition")
+def detail_facture(facture_id: int):
+    try:
+        return depot.detail(facture_id)
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err)) from err
+
+
 @router.post("/facturation/factures/envoyer", summary="Marquer des factures comme envoyées")
 def envoyer(entree: IdsIn):
     return depot.envoyer(entree.ids)

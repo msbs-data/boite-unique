@@ -317,6 +317,33 @@ class Depot:
                 })
             return out
 
+    def detail(self, facture_id: int) -> dict:
+        """Tout ce qu'il faut pour éditer la facture : l'en-tête et son détail."""
+        with self._s() as s:
+            f = s.get(Facture, facture_id)
+            if f is None:
+                raise LookupError("Facture introuvable.")
+            d = s.get(Dossier, f.dossier_id)
+            lignes = (s.query(SaisieTemps)
+                       .filter(SaisieTemps.facture_id == f.id)
+                       .order_by(SaisieTemps.jour).all())
+            encaisse = sum(x.montant for x in
+                           s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
+            return {
+                "numero": f.numero, "periode": f.periode,
+                "emise_le": f.emise_le, "echeance_le": f.echeance_le,
+                "etat": f.etat, "relances": f.relances,
+                "client": {"code": d.code, "raison_sociale": d.raison_sociale, "alias": d.alias},
+                "lignes": [{"jour": l.jour, "libelle": l.libelle or "Travaux comptables",
+                            "heures": l.heures, "taux_horaire": l.taux_horaire,
+                            "montant": _arrondi(l.heures * l.taux_horaire)} for l in lignes],
+                "heures": f.heures, "montant_ht": f.montant_ht,
+                "taux_tva": TAUX_TVA, "montant_tva": f.montant_tva,
+                "montant_ttc": f.montant_ttc,
+                "montant_encaisse": _arrondi(encaisse),
+                "reste_du": _arrondi(f.montant_ttc - encaisse),
+            }
+
     def envoyer(self, ids: list[int]) -> dict:
         """Marque les factures comme envoyées.
 
