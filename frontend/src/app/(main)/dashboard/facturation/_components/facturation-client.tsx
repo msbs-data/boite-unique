@@ -29,6 +29,7 @@ import { FactureApercu } from "./facture-apercu";
 import {
   api,
   type FactureHonoraires,
+  type LigneAudit,
   type LigneReleve,
   type SaisieTemps,
   type SyntheseFacturation,
@@ -185,6 +186,7 @@ export function FacturationClient() {
   );
   const [factures, setFactures] = React.useState<FactureHonoraires[]>([]);
   const [releve, setReleve] = React.useState<LigneReleve[]>([]);
+  const [audit, setAudit] = React.useState<LigneAudit[]>([]);
   const [lignesTemps, setLignesTemps] = React.useState<SaisieTemps[]>([]);
   const [nouvelle, setNouvelle] = React.useState<{
     jour: string;
@@ -202,16 +204,18 @@ export function FacturationClient() {
 
   const recharger = React.useCallback(async () => {
     try {
-      const [s, f, r, t] = await Promise.all([
+      const [s, f, r, t, a] = await Promise.all([
         api.getSynthese(),
         api.getFactures(),
         api.getReleve(),
         api.getTemps(),
+        api.getAudit(50),
       ]);
       setSynthese(s);
       setFactures(f);
       setReleve(r);
       setLignesTemps(t);
+      setAudit(a);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Chargement impossible");
     } finally {
@@ -356,6 +360,7 @@ export function FacturationClient() {
             Factures{brouillons.length ? ` (${brouillons.length})` : ""}
           </TabsTrigger>
           <TabsTrigger value="encaissement">Encaissement</TabsTrigger>
+          <TabsTrigger value="journal">Journal</TabsTrigger>
         </TabsList>
 
         {/* ─────────────── 1. temps ─────────────── */}
@@ -967,6 +972,64 @@ export function FacturationClient() {
               prestataire agréé.
             </p>
           </div>
+        </TabsContent>
+        {/* ─────────────── 4. journal ─────────────── */}
+        <TabsContent value="journal" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Journal des écritures sensibles
+              </CardTitle>
+              <CardDescription>
+                Qui a émis, envoyé, corrigé ou supprimé quoi. Les objets sont
+                désignés par leur libellé : une pièce supprimée n&apos;emporte
+                pas son histoire.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-44">Horodatage</TableHead>
+                    <TableHead className="w-32">Acteur</TableHead>
+                    <TableHead className="w-52">Action</TableHead>
+                    <TableHead className="w-36">Référence</TableHead>
+                    <TableHead>Détail</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {audit.map((j) => (
+                    <TableRow key={j.id}>
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {j.horodatage.replace("T", " à ")}
+                      </TableCell>
+                      <TableCell className="text-xs">{j.acteur}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {j.action.replace(/_/g, " ")}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {j.reference}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {j.detail}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {audit.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        className="text-muted-foreground py-10 text-center"
+                      >
+                        Rien encore. Le journal se remplit à la première
+                        émission.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 

@@ -50,6 +50,18 @@ class Facture(Base):
     envoyee_a = Column(String(255), nullable=True)
     relances = Column(Integer, nullable=False, default=0)
 
+    # §2 · Figé à l'émission. Le jour où la raison sociale ou l'adresse du
+    # cabinet change, les pièces déjà émises gardent ce qu'elles portaient :
+    # corriger un document remis, c'est falsifier une pièce.
+    emetteur_nom = Column(String(160), nullable=True)
+    emetteur_adresse = Column(String(255), nullable=True)
+    emetteur_siren = Column(String(32), nullable=True)
+    emetteur_tva = Column(String(32), nullable=True)
+    emetteur_iban = Column(String(64), nullable=True)
+    # Figé aussi : la règle d'arrondi appliquée, pour qu'une réédition dise
+    # comment le total a été obtenu.
+    regle_arrondi = Column(String(64), nullable=True)
+
     dossier = relationship("Dossier")
     lignes_temps = relationship("SaisieTemps", back_populates="facture")
 
@@ -92,3 +104,21 @@ class CompteurPiece(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     cle = Column(String(64), nullable=False, unique=True, index=True)
     dernier = Column(Integer, nullable=False, default=0)
+
+
+class JournalAudit(Base):
+    """Qui a fait quoi, quand, sur les écritures sensibles (§8).
+
+    Les objets sont désignés par un libellé, pas par une clé étrangère :
+    un objet supprimé ne doit pas emporter son histoire avec lui.
+    """
+
+    __tablename__ = "journal_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    horodatage = Column(String(20), nullable=False, index=True)
+    acteur = Column(String(120), nullable=False)
+    action = Column(String(64), nullable=False, index=True)
+    objet = Column(String(64), nullable=False, index=True)
+    reference = Column(String(160), nullable=False)
+    detail = Column(String(512), nullable=True)

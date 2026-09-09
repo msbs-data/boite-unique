@@ -7,14 +7,6 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { api, type FactureDetail } from "@/lib/api-client";
 import { eur, jourLong, nombre } from "@/lib/format";
 
-const CABINET = {
-  nom: "Cabinet Loiseau Conseil",
-  adresse: "14 rue des Tanneurs · 77000 Melun",
-  siren: "912 445 771",
-  tva: "FR38912445771",
-  iban: "FR76 3000 4008 2800 0123 4567 890",
-};
-
 export function FactureApercu({
   factureId,
   onClose,
@@ -59,12 +51,12 @@ export function FactureApercu({
             <div className="flex items-start justify-between border-b-2 border-neutral-900 pb-5">
               <div>
                 <div className="text-lg font-bold tracking-tight">
-                  {CABINET.nom}
+                  {f.emetteur.nom}
                 </div>
                 <div className="mt-1 text-xs text-neutral-600">
-                  {CABINET.adresse}
+                  {f.emetteur.adresse}
                   <br />
-                  SIREN {CABINET.siren} · TVA {CABINET.tva}
+                  SIREN {f.emetteur.siren} · TVA {f.emetteur.tva}
                 </div>
               </div>
               <div className="text-right">
@@ -194,9 +186,11 @@ export function FactureApercu({
             </div>
 
             <div className="mt-10 border-t pt-4 text-[11px] leading-relaxed text-neutral-600">
-              Règlement à 30 jours par virement — {CABINET.iban}. Merci de
+              Règlement à 30 jours par virement — {f.emetteur.iban}. Merci de
               rappeler la référence{" "}
               <span className="font-mono">{f.numero}</span> sur votre virement.
+              <br />
+              <span className="text-neutral-500">{f.regle_arrondi}.</span>
               <br />
               Passé l&apos;échéance : pénalités au taux directeur de la BCE
               majoré de 10 points et indemnité forfaitaire de recouvrement de 40

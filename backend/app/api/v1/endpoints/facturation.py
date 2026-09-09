@@ -104,6 +104,11 @@ def relancer(entree: IdsIn):
     return depot.relancer(entree.ids)
 
 
+@router.get("/facturation/audit", summary="Journal des écritures sensibles")
+def audit(limite: int = Query(default=200, ge=1, le=1000)):
+    return depot.audit(limite)
+
+
 @router.get("/facturation/releve", response_model=List[LigneReleveOut], summary="Relevé bancaire")
 def releve():
     return depot.releve()

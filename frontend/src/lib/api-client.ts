@@ -190,6 +190,14 @@ export interface FactureDetail {
   etat: string;
   relances: number;
   client: { code: string; raison_sociale: string; alias: string };
+  emetteur: {
+    nom: string;
+    adresse: string;
+    siren: string;
+    tva: string;
+    iban: string;
+  };
+  regle_arrondi: string;
   lignes: {
     jour: string;
     libelle: string;
@@ -214,6 +222,16 @@ export interface LigneReleve {
   reference?: string | null;
   rapprochement: "exact" | "approchant" | "aucun" | string;
   facture_numero?: string | null;
+}
+
+export interface LigneAudit {
+  id: number;
+  horodatage: string;
+  acteur: string;
+  action: string;
+  objet: string;
+  reference: string;
+  detail?: string | null;
 }
 
 export interface SaisieTemps {
@@ -451,6 +469,8 @@ export const api = {
       },
     ),
   getReleve: () => request<LigneReleve[]>("/facturation/releve"),
+  getAudit: (limite = 200) =>
+    request<LigneAudit[]>(`/facturation/audit?limite=${limite}`),
   simulerReleve: () =>
     request<{ message: string; lignes: number }>(
       "/facturation/releve/simuler",

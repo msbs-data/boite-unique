@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 
 from ..core import database as db_mod
 from ..models.dossier import Dossier
-from ..models.facturation import CompteurPiece, Facture, LigneReleve, SaisieTemps
+from sqlalchemy import text
+
+from ..models.facturation import (
+    CompteurPiece, Facture, JournalAudit, LigneReleve, SaisieTemps,
+)
 
 TAUX_TVA_MILLIEMES = 200          # 20,0 % — en millièmes, pour rester entier
 DELAI_PAIEMENT_JOURS = 30
@@ -53,8 +57,28 @@ def _bornes(periode: str) -> tuple[str, str]:
     return f"{periode}-01", f"{periode}-{dernier:02d}"
 
 
+# §3 · La règle d'arrondi, écrite parce qu'elle ne se devine pas.
+# La TVA est calculée sur le total hors taxes de la facture, à taux unique,
+# arrondie au centime le plus proche — et non ligne par ligne puis sommée.
+# Les deux méthodes peuvent différer d'un centime ; celle-ci fait que le
+# total TTC du document est toujours exactement HT + TVA affichés.
+REGLE_ARRONDI = "TVA au taux unique sur le total HT, arrondie au centime"
+
+
 def _tva_c(ht_c: int) -> int:
     return int(round(ht_c * TAUX_TVA_MILLIEMES / 1000))
+
+
+def _maintenant() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def journaliser(s, acteur: str, action: str, objet: str, reference: str,
+                detail: str | None = None) -> None:
+    """§8 · Une écriture sensible laisse une trace. Rétro-ajouté, un journal
+    ne reconstitue pas le passé : il s'écrit dès le premier jour."""
+    s.add(JournalAudit(horodatage=_maintenant(), acteur=acteur, action=action,
+                       objet=objet, reference=reference, detail=detail))
 
 
 @dataclass
@@ -83,20 +107,22 @@ class Depot:
             s.commit()
             return ligne.id
 
-    def supprimer_temps(self, ligne_id: int) -> bool:
+    def supprimer_temps(self, ligne_id: int, acteur: str = "M. Loiseau") -> bool:
         with self._s() as s:
             l = s.get(SaisieTemps, ligne_id)
             if l is None:
                 return False
             if l.facture_id is not None:
                 raise ValueError("Cette ligne est déjà facturée : elle ne peut plus être supprimée.")
+            journaliser(s, acteur, "suppression_temps", "saisie_temps", str(l.id),
+                        f"{l.jour} · {l.heures:g} h × {en_euros(l.taux_horaire_c):.2f} €")
             s.delete(l)
             s.commit()
             return True
 
     def modifier_temps(self, ligne_id: int, heures: float | None = None,
                        taux_horaire: float | None = None, jour: str | None = None,
-                       libelle: str | None = None) -> dict:
+                       libelle: str | None = None, acteur: str = "M. Loiseau") -> dict:
         """Corrige une ligne de temps. Refusé dès qu'elle est facturée.
 
         Une heure partie en facture ne se réécrit pas : la facture serait fausse
@@ -111,6 +137,7 @@ class Depot:
                 raise ValueError(
                     "Cette ligne est déjà portée par une facture : elle ne peut plus être modifiée."
                 )
+            avant = f"{l.heures:g} h × {en_euros(l.taux_horaire_c):.2f} €"
             if heures is not None:
                 if heures <= 0 or heures > 24:
                     raise ValueError("Le nombre d'heures doit être compris entre 0 et 24.")
@@ -123,6 +150,8 @@ class Depot:
                 l.jour = jour
             if libelle is not None:
                 l.libelle = libelle or None
+            journaliser(s, acteur, "correction_temps", "saisie_temps", str(l.id),
+                        f"{avant} → {l.heures:g} h × {en_euros(l.taux_horaire_c):.2f} €")
             s.commit()
             return {"id": l.id, "heures": l.heures,
                     "taux_horaire": en_euros(l.taux_horaire_c),
@@ -150,7 +179,8 @@ class Depot:
                     "message": f"{len(lignes)} ligne(s) repassée(s) à {taux_horaire:.2f} €/h. "
                                "Les lignes déjà facturées n'ont pas bougé."}
 
-    def attribuer(self, ligne_id: int, facture_id: int | None) -> dict:
+    def attribuer(self, ligne_id: int, facture_id: int | None,
+                  acteur: str = "M. Loiseau") -> dict:
         """Rattache — ou détache — une ligne de relevé à une facture, à la main.
 
         C'est la sortie de secours des cas que le rapprochement automatique
@@ -167,6 +197,9 @@ class Depot:
                 if f is None:
                     raise LookupError("Facture introuvable.")
                 l.facture_id, l.rapprochement = f.id, "manuel"
+            journaliser(s, acteur, "attribution_manuelle", "ligne_releve", str(l.id),
+                        f"{en_euros(l.montant_c):.2f} € → "
+                        f"{f.numero if facture_id else 'détachée'}")
             s.commit()
         self._recalculer_etats()
         return {"ligne": ligne_id, "facture": facture_id,
@@ -278,15 +311,22 @@ class Depot:
         volontairement non rebouché.
         """
         cle = f"facture_honoraires:{periode}"
-        rang = s.query(CompteurPiece).filter(CompteurPiece.cle == cle).with_for_update().first()
-        if rang is None:
-            rang = CompteurPiece(cle=cle, dernier=0)
-            s.add(rang)
+        if s.query(CompteurPiece).filter(CompteurPiece.cle == cle).first() is None:
+            s.add(CompteurPiece(cle=cle, dernier=0))
             s.flush()
-        rang.dernier += 1
-        return f"FH-{periode.replace('-', '')}-{rang.dernier:03d}"
+        # §1 · Un seul ordre SQL lit et incrémente. `with_for_update()` aurait
+        # été silencieusement ignoré par SQLite, donc sans effet le jour où
+        # quelqu'un rebascule de moteur : deux factures simultanées auraient
+        # pris le même numéro sans qu'aucune erreur ne le dise.
+        rang = s.execute(
+            text("UPDATE compteur_piece SET dernier = dernier + 1 "
+                 "WHERE cle = :cle RETURNING dernier"),
+            {"cle": cle},
+        ).scalar_one()
+        return f"FH-{periode.replace('-', '')}-{rang:03d}"
 
-    def generer(self, periode: str | None = None, dossiers: list[str] | None = None) -> dict:
+    def generer(self, periode: str | None = None, dossiers: list[str] | None = None,
+                acteur: str = "M. Loiseau") -> dict:
         """Une facture par dossier, sur le temps non encore facturé de la période."""
         periode = periode or _periode_courante()
         if dossiers is not None and len(dossiers) == 0:
@@ -314,14 +354,20 @@ class Depot:
                 heures = sum(t.heures for t in ts)
                 ht_c = sum(montant_ligne_c(t.heures, t.taux_horaire_c) for t in ts)
                 tva_c = _tva_c(ht_c)
+                em = emetteur_courant()
                 f = Facture(numero=self._numero(s, periode), dossier_id=d.id, periode=periode,
                             emise_le=emise.isoformat(), echeance_le=echeance.isoformat(),
                             heures=round(heures, 2), montant_ht_c=ht_c, montant_tva_c=tva_c,
-                            montant_ttc_c=ht_c + tva_c, etat="brouillon")
+                            montant_ttc_c=ht_c + tva_c, etat="brouillon",
+                            emetteur_nom=em["nom"], emetteur_adresse=em["adresse"],
+                            emetteur_siren=em["siren"], emetteur_tva=em["tva"],
+                            emetteur_iban=em["iban"], regle_arrondi=REGLE_ARRONDI)
                 s.add(f)
                 s.flush()
                 for t in ts:
                     t.facture_id = f.id          # l'heure est consommée, définitivement
+                journaliser(s, acteur, "emission_facture", "facture", f.numero,
+                            f"{d.raison_sociale} · {heures:g} h · {en_euros(ht_c + tva_c):.2f} € TTC")
                 creees.append({"numero": f.numero, "dossier": d.code,
                                "raison_sociale": d.raison_sociale, "heures": f.heures,
                                "montant_ttc": en_euros(f.montant_ttc_c)})
@@ -370,6 +416,14 @@ class Depot:
                              s.query(LigneReleve).filter(LigneReleve.facture_id == f.id).all())
             return {
                 "numero": f.numero, "periode": f.periode,
+                "emetteur": {
+                    "nom": f.emetteur_nom or emetteur_courant()["nom"],
+                    "adresse": f.emetteur_adresse or emetteur_courant()["adresse"],
+                    "siren": f.emetteur_siren or emetteur_courant()["siren"],
+                    "tva": f.emetteur_tva or emetteur_courant()["tva"],
+                    "iban": f.emetteur_iban or emetteur_courant()["iban"],
+                },
+                "regle_arrondi": f.regle_arrondi or REGLE_ARRONDI,
                 "emise_le": f.emise_le, "echeance_le": f.echeance_le,
                 "etat": f.etat, "relances": f.relances,
                 "client": {"code": d.code, "raison_sociale": d.raison_sociale, "alias": d.alias},
@@ -386,7 +440,7 @@ class Depot:
                 "reste_du": en_euros(f.montant_ttc_c - encaisse_c),
             }
 
-    def envoyer(self, ids: list[int]) -> dict:
+    def envoyer(self, ids: list[int], acteur: str = "M. Loiseau") -> dict:
         """Marque les factures comme envoyées.
 
         L'envoi réel n'est pas effectué dans cette démonstration : aucun message
@@ -404,6 +458,7 @@ class Depot:
                 f.etat = "envoyee"
                 f.envoyee_le = horodatage
                 f.envoyee_a = d.alias if d else None
+                journaliser(s, acteur, "envoi_facture", "facture", f.numero, f"à {f.envoyee_a}")
                 envoyees.append({"numero": f.numero, "a": f.envoyee_a})
             s.commit()
         return {"envoyees": envoyees, "simule": True,
@@ -515,6 +570,14 @@ class Depot:
         n = self.importer_releve(lignes)
         return {"message": f"{n} mouvement(s) reçus sur le compte du cabinet.", "lignes": n}
 
+    def audit(self, limite: int = 200) -> list[dict]:
+        with self._s() as s:
+            return [{"id": j.id, "horodatage": j.horodatage, "acteur": j.acteur,
+                     "action": j.action, "objet": j.objet, "reference": j.reference,
+                     "detail": j.detail}
+                    for j in s.query(JournalAudit)
+                              .order_by(JournalAudit.id.desc()).limit(limite).all()]
+
     def relancer(self, ids: list[int]) -> dict:
         relancees = []
         with self._s() as s:
@@ -527,6 +590,19 @@ class Depot:
             s.commit()
         return {"relancees": relancees, "simule": True,
                 "message": f"{len(relancees)} relance(s) enregistrée(s). Aucun message n'a été expédié."}
+
+
+def emetteur_courant() -> dict:
+    """L'identité du cabinet au moment présent. Recopiée sur chaque facture
+    à son émission, jamais relue ensuite pour une pièce déjà partie (§2)."""
+    from ..core.config import settings
+    return {
+        "nom": getattr(settings, "CABINET_NOM", "Cabinet Loiseau Conseil"),
+        "adresse": getattr(settings, "CABINET_ADRESSE", "14 rue des Tanneurs · 77000 Melun"),
+        "siren": getattr(settings, "CABINET_SIREN", "912 445 771"),
+        "tva": getattr(settings, "CABINET_TVA", "FR38912445771"),
+        "iban": getattr(settings, "CABINET_IBAN", "FR76 3000 4008 2800 0123 4567 890"),
+    }
 
 
 TAUX = {"VELLARD-TOI": 95, "FERRAND-BOU": 95, "NEDJAR-GAR": 95,
